@@ -1,20 +1,60 @@
-﻿using System.Threading;
+﻿using HtmlAgilityPack;
 using RedditSharp;
 using RedditSharp.Things;
 using System;
 using System.Linq;
+using System.Threading;
 
 namespace rJacksonvilleModBot
 {
     class Program
     {
         private const string DailyCommentFormat = "Reply here with events on {0}.";
+        private const string DailyEventsUrl = "http://events.jacksonville.com/calendar/day/{0}-{1}-{2}";
         private const string MonthlyPostTitleFormat = "Post {0} {1} Events Here";//"Jacksonville Events Calendar: Post {0} {1} Events Here";
         private const string SidebarSectionMarkdown = "#**Events and Entertainment**";
         private const string SidebarSectionAdditional = "\r\n**More event & entertainment resources**\r\n\r\n* [Downtown Jacksonville](http://downtownjacksonville.org/Downtown_Vision_Inc_Home.aspx)\r\n* [Jax.com Events](http://events.jacksonville.com/)\r\n* [JaxEvents](http://www.jaxevents.com/)\r\n* [Folio Events](http://folioweekly.com/calendar)\r\n* [Jax4Kids - Family Friendly Events](http://jax4kids.com/)";
         private const string SubredditName = "/r/Jacksonville";
 
-        private static Post GetOrCreateMonthlyPost(Reddit reddit, Subreddit subreddit, AuthenticatedUser user, int month, int year)
+        private static void CreateDailyEvents(Comment comment, int year, int month, int day)
+        {
+            var web = new HtmlWeb();
+            var url = string.Format(DailyEventsUrl, year, month, day);
+            var doc = web.Load(url);
+
+            foreach (var eventNode in doc.DocumentNode.SelectNodes("//div[@class='listing-item']").Reverse())
+            {
+                var eventComment = string.Empty;
+
+                var howNode = eventNode.SelectSingleNode("p[@class='item_how']/span/a");
+                var whatNode = eventNode.SelectSingleNode("span/p[@class='item_what']/a");
+                var whenNode = eventNode.SelectSingleNode("p[@class='item_when']/time");
+                var whereNode = eventNode.SelectSingleNode("span/p[@class='item_where']/a");
+
+                if (whatNode != null)
+                    eventComment += "Event: [" + whatNode.InnerText + "]" + "(" + new Uri(new Uri(url), whatNode.Attributes["href"].Value) + ")" + Environment.NewLine + Environment.NewLine;
+
+                if (whereNode != null)
+                    eventComment += "Place: [" + whereNode.InnerText + "]" + "(" + new Uri(new Uri(url), whereNode.Attributes["href"].Value) + ")" + Environment.NewLine + Environment.NewLine;
+
+                if (whenNode != null)
+                    eventComment += "Time: " + whenNode.InnerText + Environment.NewLine + Environment.NewLine;
+
+                if (howNode != null)
+                    eventComment += "[" + howNode.InnerText + "]" + "(" + new Uri(new Uri(url), howNode.Attributes["href"].Value) + ")" + Environment.NewLine + Environment.NewLine;
+
+                if (!string.IsNullOrWhiteSpace(eventComment))
+                {
+                    eventComment += "&nbsp;" + Environment.NewLine + Environment.NewLine + "^^source: ^^[Jacksonville&nbsp;Events&nbsp;Calendar](http://events.jacksonville.com/)";
+
+                    comment.Reply(eventComment);
+                }
+
+                Thread.Sleep(3000); // Wait 3 seconds before posting another comment
+            }
+        }
+
+        private static Post GetOrCreateMonthlyPost(Reddit reddit, Subreddit subreddit, AuthenticatedUser user, int year, int month)
         {
             var firstDateOfMonth = new DateTime(year, month, 1);
             var monthName = firstDateOfMonth.ToString("MMMM");
@@ -35,10 +75,12 @@ namespace rJacksonvilleModBot
 
             while (dailyCommentDate.Month == month)
             {
-                post.Comment(string.Format(DailyCommentFormat, dailyCommentDate.ToString("MMMM d, yyyy")));
+                var dailyComment = post.Comment(string.Format(DailyCommentFormat, dailyCommentDate.ToString("MMMM d, yyyy")));
+
+                CreateDailyEvents(dailyComment, dailyCommentDate.Year, dailyCommentDate.Month, dailyCommentDate.Day);
 
                 dailyCommentDate = dailyCommentDate.AddDays(1);
-                
+
                 Thread.Sleep(10000); // Wait 10 seconds before posting another comment
             }
 
@@ -72,8 +114,8 @@ namespace rJacksonvilleModBot
 
             // Get or create the post for this month
             var today = DateTime.Now;
-            var thisMonthPost = GetOrCreateMonthlyPost(reddit, subreddit, user, today.Month, today.Year);
-            var todaysComments = thisMonthPost.Comments.Where(c => c.Author == user.Name && c.Body == string.Format(DailyCommentFormat, today.ToString("MMMM d, yyyy"))).ToList();
+            var thisMonthPost = GetOrCreateMonthlyPost(reddit, subreddit, user, today.Year, today.Month);
+            var todaysComments = thisMonthPost.ListComments(2000).Where(c => c.Author == user.Name && c.Body == string.Format(DailyCommentFormat, today.ToString("MMMM d, yyyy"))).ToList();
 
             if (todaysComments.Any())
             {
@@ -96,7 +138,7 @@ namespace rJacksonvilleModBot
                     newSidebarContent += Environment.NewLine + "* [" + today.Day + "](" + todaysComments.First().Shortlink + ")";
                     newSidebarContent += Environment.NewLine + Environment.NewLine + "[](http://example.com)" + Environment.NewLine;
                     newSidebarContent += Environment.NewLine + "* [There are " + todaysComments.First().Comments.Count() + " events today. Check it out or add your own.](" + todaysComments.First().Shortlink + ")";
-                    newSidebarContent += Environment.NewLine + "* [Additionally, there are " + thisMonthPost.Comments.Where(c => c.Author == user.Name).Sum(c => c.Comments.Count) + " events posted for this month.](" + thisMonthPost.Shortlink + ")";
+                    newSidebarContent += Environment.NewLine + "* [Additionally, there are " + thisMonthPost.ListComments(2000).Where(c => c.Author == user.Name).Sum(c => c.Comments.Count) + " events posted for this month.](" + thisMonthPost.Shortlink + ")";
                     newSidebarContent += Environment.NewLine + SidebarSectionAdditional;
 
                     settings.Sidebar = sidebar.Remove(startIndex, endIndex - startIndex).Insert(startIndex, Environment.NewLine + Environment.NewLine + newSidebarContent + Environment.NewLine + Environment.NewLine);
@@ -116,7 +158,7 @@ namespace rJacksonvilleModBot
             if (today.Day > 21)
             {
                 var nextMonth = today.AddMonths(1);
-                var nextMonthPost = GetOrCreateMonthlyPost(reddit, subreddit, user, nextMonth.Month, nextMonth.Year);
+                var nextMonthPost = GetOrCreateMonthlyPost(reddit, subreddit, user, nextMonth.Year, nextMonth.Month);
             }
 
             // TODO: Find or add the API methods for automatically making certain Monthly posts sticky.
