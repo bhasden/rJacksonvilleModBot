@@ -1,4 +1,5 @@
 ﻿using HtmlAgilityPack;
+using Microsoft.Azure;
 using RedditSharp;
 using RedditSharp.Things;
 using System;
@@ -91,18 +92,44 @@ namespace rJacksonvilleModBot
 
         static void Main(string[] args)
         {
+            var password = string.Empty;
+            var username = string.Empty;
+            
+            if (args != null && args.Count() == 2)
+            {
+                password = args[1];
+                username = args[0];
+            }
+            else
+            {
+                password = CloudConfigurationManager.GetSetting("pass");
+                username = CloudConfigurationManager.GetSetting("user");
+            }
+
+            if (string.IsNullOrWhiteSpace(password) || string.IsNullOrWhiteSpace(username))
+            {
+                Console.WriteLine("Invalid or missing username and password.");
+                Environment.Exit(1);
+            }
+
             var reddit = new Reddit();
-            var user = reddit.LogIn(args[0], args[1]);
+            var user = reddit.LogIn(username, password);
             var subreddit = reddit.GetSubreddit(SubredditName);
 
-            AppDomain.CurrentDomain.UnhandledException += (o, e) => reddit.ComposePrivateMessage("Exception", e.ExceptionObject.ToString(), SubredditName);
+            AppDomain.CurrentDomain.UnhandledException += (o, e) =>
+            {
+                reddit.ComposePrivateMessage("Exception", e.ExceptionObject.ToString(), SubredditName);
+                Console.WriteLine(e.ExceptionObject);
+                Environment.Exit(3);
+            };
 
             subreddit.Subscribe();
 
             if (!user.ModeratorSubreddits.Any(s => s.ToString().Equals(SubredditName, StringComparison.OrdinalIgnoreCase)))
             {
-                reddit.ComposePrivateMessage("Bot user not a moderator", "The user '" + args[0] + "' is not a moderator for the " + SubredditName + " subreddit.", SubredditName);
-                return;
+                reddit.ComposePrivateMessage("Bot user not a moderator", "The user '" + username + "' is not a moderator for the " + SubredditName + " subreddit.", SubredditName);
+                Console.WriteLine("The user '" + username + "' is not a moderator for the " + SubredditName + " subreddit.");
+                Environment.Exit(2);
             }
 
             // Reply to any private messages that have been sent to the mod bot.
@@ -136,7 +163,7 @@ namespace rJacksonvilleModBot
                     var newSidebarContent = "* [" + today.DayOfWeek + "](" + todaysComments.First().Shortlink + ")";
                     newSidebarContent += Environment.NewLine + "* [" + today.ToString("MMMM") + "](" + todaysComments.First().Shortlink + ")";
                     newSidebarContent += Environment.NewLine + "* [" + today.Day + "](" + todaysComments.First().Shortlink + ")";
-                    newSidebarContent += Environment.NewLine + Environment.NewLine + "[](http://example.com)" + Environment.NewLine;
+                    newSidebarContent += Environment.NewLine + Environment.NewLine + "&nbsp;" + Environment.NewLine;
                     newSidebarContent += Environment.NewLine + "* [There are " + todaysComments.First().Comments.Count() + " events today. Check it out or add your own.](" + todaysComments.First().Shortlink + ")";
                     newSidebarContent += Environment.NewLine + "* [Additionally, there are " + thisMonthPost.ListComments(2000).Where(c => c.Author == user.Name).Sum(c => c.Comments.Count) + " events posted for this month.](" + thisMonthPost.Shortlink + ")";
                     newSidebarContent += Environment.NewLine + SidebarSectionAdditional;
@@ -154,8 +181,8 @@ namespace rJacksonvilleModBot
                 reddit.ComposePrivateMessage("No daily post found", "There was no daily comment found for " + today.ToString("MMMM d, yyyy") + ".", SubredditName);
             }
 
-            // Ensure next months post exists if we're more than 3 weeks into the current month
-            if (today.Day > 21)
+            // Ensure next months post exists if we're more than 25 days into the current month
+            if (today.Day > 25)
             {
                 var nextMonth = today.AddMonths(1);
                 var nextMonthPost = GetOrCreateMonthlyPost(reddit, subreddit, user, nextMonth.Year, nextMonth.Month);
