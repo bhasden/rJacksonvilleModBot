@@ -3,6 +3,7 @@ using Microsoft.Azure;
 using RedditSharp;
 using RedditSharp.Things;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 
@@ -10,14 +11,14 @@ namespace rJacksonvilleModBot
 {
     class Program
     {
-        private const string DailyCommentFormat = "Reply here with events on {0}.";
         private const string DailyEventsUrl = "http://events.jacksonville.com/calendar/day/{0}-{1}-{2}";
-        private const string MonthlyPostTitleFormat = "Post {0} {1} Events Here";//"Jacksonville Events Calendar: Post {0} {1} Events Here";
+        private const string DailyPostDescription = "Know of an event on {0}? Post it here and when the date comes around, it'll be linked to from the sidebar.";
+        private const string DailyPostTitleFormat = "Jacksonville Events Calendar: {1} {2}, {0}";
         private const string SidebarSectionMarkdown = "#**Events and Entertainment**";
         private const string SidebarSectionAdditional = "\r\n**More event & entertainment resources**\r\n\r\n* [Downtown Jacksonville](http://downtownjacksonville.org/Downtown_Vision_Inc_Home.aspx)\r\n* [Jax.com Events](http://events.jacksonville.com/)\r\n* [JaxEvents](http://www.jaxevents.com/)\r\n* [Folio Events](http://folioweekly.com/calendar)\r\n* [Jax4Kids - Family Friendly Events](http://jax4kids.com/)";
         private const string SubredditName = "/r/Jacksonville";
 
-        private static void CreateDailyEvents(Comment comment, int year, int month, int day)
+        private static void CreateDailyEvents(Post post, int year, int month, int day)
         {
             var web = new HtmlWeb();
             var url = string.Format(DailyEventsUrl, year, month, day);
@@ -48,53 +49,59 @@ namespace rJacksonvilleModBot
                 {
                     eventComment += "&nbsp;" + Environment.NewLine + Environment.NewLine + "^^source: ^^[Jacksonville&nbsp;Events&nbsp;Calendar](http://events.jacksonville.com/)";
 
-                    comment.Reply(eventComment);
+                    post.Comment(eventComment);
                 }
 
                 Thread.Sleep(3000); // Wait 3 seconds before posting another comment
             }
         }
 
-        private static Post GetOrCreateMonthlyPost(Reddit reddit, Subreddit subreddit, AuthenticatedUser user, int year, int month)
+        private static IEnumerable<Post> GetOrCreateDailyPosts(Reddit reddit, Subreddit subreddit, AuthenticatedUser user, int year, int month)
         {
             var firstDateOfMonth = new DateTime(year, month, 1);
             var monthName = firstDateOfMonth.ToString("MMMM");
-            var monthPostTitle = string.Format(MonthlyPostTitleFormat, monthName, year);
-            var monthPosts = user.Posts.Where(p => p.Author.Name == user.Name && p.Title == monthPostTitle).OrderByDescending(p => p.Created);
 
-            if (monthPosts.Any())
+            var createdPost = false;
+            var dailyPostDate = firstDateOfMonth;
+            var userPosts = user.Posts.ToList();
+
+            while (dailyPostDate.Month == month)
             {
-                if (monthPosts.Count() > 1)
-                    reddit.ComposePrivateMessage("Multiple monthly posts found", "Multiple posts found for " + monthName + " monthly post." + Environment.NewLine + string.Join(Environment.NewLine, monthPosts.Select(p => p.Shortlink)), SubredditName);
+                var dailyPostTitle = string.Format(DailyPostTitleFormat, year, monthName, dailyPostDate.Day);
+                var dailyPosts = userPosts.Where(p => p.Title == dailyPostTitle).OrderByDescending(p => p.Created);
 
-                return monthPosts.First();
+                if (dailyPosts.Any())
+                {
+                    if (dailyPosts.Count() > 1)
+                        reddit.ComposePrivateMessage("Multiple daily posts found", "Multiple posts found for " + dailyPostDate.ToShortDateString() + " post." + Environment.NewLine + string.Join(Environment.NewLine, dailyPosts.Select(p => p.Shortlink)), SubredditName);
+
+                    yield return dailyPosts.First();
+                }
+                else
+                {
+                    // Create the post for the day.
+                    var post = subreddit.SubmitTextPost(dailyPostTitle, string.Format(DailyPostDescription, dailyPostDate.ToLongDateString()));
+                    
+                    CreateDailyEvents(post, dailyPostDate.Year, dailyPostDate.Month, dailyPostDate.Day);
+
+                    yield return post;
+
+                    createdPost = true;
+                    Thread.Sleep(10000); // Wait 10 seconds before creating another post
+                }
+                
+                dailyPostDate = dailyPostDate.AddDays(1);
             }
 
-            // Create the post for the month if it doesn't exist.
-            var post = subreddit.SubmitTextPost(monthPostTitle, "Know of something going on in " + monthName + "? Post it here under the appropriately dated comment. When the date comes around, it'll be linked to from the sidebar.");
-            var dailyCommentDate = firstDateOfMonth;
-
-            while (dailyCommentDate.Month == month)
-            {
-                var dailyComment = post.Comment(string.Format(DailyCommentFormat, dailyCommentDate.ToString("MMMM d, yyyy")));
-
-                CreateDailyEvents(dailyComment, dailyCommentDate.Year, dailyCommentDate.Month, dailyCommentDate.Day);
-
-                dailyCommentDate = dailyCommentDate.AddDays(1);
-
-                Thread.Sleep(10000); // Wait 10 seconds before posting another comment
-            }
-
-            reddit.ComposePrivateMessage("New monthly post created", "Monthly events post created for " + monthName + " at " + post.Shortlink + ".", SubredditName);
-
-            return post;
+            if (createdPost)
+                reddit.ComposePrivateMessage("New month worth of posts created", "Daily posts were created for " + monthName + ".", SubredditName);
         }
 
         static void Main(string[] args)
         {
             var password = string.Empty;
             var username = string.Empty;
-            
+
             if (args != null && args.Count() == 2)
             {
                 password = args[1];
@@ -141,14 +148,11 @@ namespace rJacksonvilleModBot
 
             // Get or create the post for this month
             var today = DateTime.Now;
-            var thisMonthPost = GetOrCreateMonthlyPost(reddit, subreddit, user, today.Year, today.Month);
-            var todaysComments = thisMonthPost.ListComments(2000).Where(c => c.Author == user.Name && c.Body == string.Format(DailyCommentFormat, today.ToString("MMMM d, yyyy"))).ToList();
-
-            if (todaysComments.Any())
+            var dailyPosts = GetOrCreateDailyPosts(reddit, subreddit, user, today.Year, today.Month).ToList();
+            var todaysPosts = dailyPosts.Where(p => p.AuthorName == user.Name && p.Title == string.Format(DailyPostTitleFormat, today.Year, today.ToString("MMMM"), today.Day)).ToList();
+            
+            if (dailyPosts.Any())
             {
-                if (todaysComments.Count() > 1)
-                    reddit.ComposePrivateMessage("Multiple daily posts found", "Multiple posts found for " + today.ToString("MMMM d, yyyy") + " daily post." + Environment.NewLine + string.Join(Environment.NewLine, todaysComments.Select(c => c.Shortlink)), SubredditName);
-
                 var settings = subreddit.Settings;
                 var sidebar = settings.Sidebar;
 
@@ -160,12 +164,35 @@ namespace rJacksonvilleModBot
                     if (endIndex < 0)
                         endIndex = sidebar.Length - 1; // There's no next section, so just replace the rest of the content
 
-                    var newSidebarContent = "* [" + today.DayOfWeek + "](" + todaysComments.First().Shortlink + ")";
-                    newSidebarContent += Environment.NewLine + "* [" + today.ToString("MMMM") + "](" + todaysComments.First().Shortlink + ")";
-                    newSidebarContent += Environment.NewLine + "* [" + today.Day + "](" + todaysComments.First().Shortlink + ")";
+                    var newSidebarContent = "* [" + today.DayOfWeek + "](" + todaysPosts.First().Shortlink + ")";
+                    newSidebarContent += Environment.NewLine + "* [" + today.ToString("MMMM") + "](" + todaysPosts.First().Shortlink + ")";
+                    newSidebarContent += Environment.NewLine + "* [" + today.Day + "](" + todaysPosts.First().Shortlink + ")";
+                    newSidebarContent += Environment.NewLine + Environment.NewLine + ">" + Environment.NewLine;
+                    newSidebarContent += Environment.NewLine + "* [There are " + todaysPosts.First().ListComments(2000).Count() + " events today. Check it out or add your own.](" + todaysPosts.First().Shortlink + ")";
                     newSidebarContent += Environment.NewLine + Environment.NewLine + "&nbsp;" + Environment.NewLine;
-                    newSidebarContent += Environment.NewLine + "* [There are " + todaysComments.First().Comments.Count() + " events today. Check it out or add your own.](" + todaysComments.First().Shortlink + ")";
-                    newSidebarContent += Environment.NewLine + "* [Additionally, there are " + thisMonthPost.ListComments(2000).Where(c => c.Author == user.Name).Sum(c => c.Comments.Count) + " events posted for this month.](" + thisMonthPost.Shortlink + ")";
+
+                    newSidebarContent += "######" + today.ToString("MMMM");
+                    newSidebarContent += Environment.NewLine + "| Su | Mo | Tu | We | Th | Fr | Sa |" + Environment.NewLine + "|-|-|-|-|-|-|-|";
+
+                    for (var i = 1; i <= DateTime.DaysInMonth(today.Year, today.Month); i++)
+                    {
+                        var date = new DateTime(today.Year, today.Month, i);
+
+                        if (i == 1)
+                            newSidebarContent += Environment.NewLine + string.Join("|", Enumerable.Range(0, (int)date.DayOfWeek + 1).Select(d => string.Empty));
+                        
+                        var dailyPost = dailyPosts.Where(p => p.AuthorName == user.Name && p.Title == string.Format(DailyPostTitleFormat, today.Year, today.ToString("MMMM"), i)).ToList();
+
+                        if (dailyPost.Any())
+                            newSidebarContent += "| [" + i + "](" + dailyPost.First().Shortlink + ")";
+                        else
+                            newSidebarContent += "| " + i;
+
+                        if (date.DayOfWeek == DayOfWeek.Saturday)
+                            newSidebarContent += "|" + Environment.NewLine;
+                    }
+
+                    newSidebarContent += Environment.NewLine + Environment.NewLine + "&nbsp;" + Environment.NewLine;
                     newSidebarContent += Environment.NewLine + SidebarSectionAdditional;
 
                     settings.Sidebar = sidebar.Remove(startIndex, endIndex - startIndex).Insert(startIndex, Environment.NewLine + Environment.NewLine + newSidebarContent + Environment.NewLine + Environment.NewLine);
@@ -185,7 +212,7 @@ namespace rJacksonvilleModBot
             if (today.Day > 25)
             {
                 var nextMonth = today.AddMonths(1);
-                var nextMonthPost = GetOrCreateMonthlyPost(reddit, subreddit, user, nextMonth.Year, nextMonth.Month);
+                var nextMonthPosts = GetOrCreateDailyPosts(reddit, subreddit, user, nextMonth.Year, nextMonth.Month).ToList();
             }
 
             // TODO: Find or add the API methods for automatically making certain Monthly posts sticky.
