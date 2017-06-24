@@ -102,7 +102,7 @@ namespace rJacksonvilleModBot
             var password = string.Empty;
             var username = string.Empty;
 
-            if (args != null && args.Count() == 2)
+            if (args != null && args.Length == 2)
             {
                 password = args[1];
                 username = args[0];
@@ -168,7 +168,7 @@ namespace rJacksonvilleModBot
                     newSidebarContent += Environment.NewLine + "* [" + today.ToString("MMMM") + "](" + todaysPosts.First().Shortlink + ")";
                     newSidebarContent += Environment.NewLine + "* [" + today.Day + "](" + todaysPosts.First().Shortlink + ")";
                     newSidebarContent += Environment.NewLine + Environment.NewLine + ">" + Environment.NewLine;
-                    newSidebarContent += Environment.NewLine + "* [There are " + todaysPosts.First().ListComments(2000).Count() + " events today. Check it out or add your own.](" + todaysPosts.First().Shortlink + ")";
+                    newSidebarContent += Environment.NewLine + "* [There are " + todaysPosts.First().ListComments(2000).Count + " events today. Check it out or add your own.](" + todaysPosts.First().Shortlink + ")";
                     newSidebarContent += Environment.NewLine + Environment.NewLine + "&nbsp;" + Environment.NewLine;
 
                     newSidebarContent += "######" + today.ToString("MMMM");
@@ -212,10 +212,8 @@ namespace rJacksonvilleModBot
             if (today.Day > 25)
             {
                 var nextMonth = today.AddMonths(1);
-                var nextMonthPosts = GetOrCreateDailyPosts(reddit, subreddit, user, nextMonth.Year, nextMonth.Month).ToList();
+                GetOrCreateDailyPosts(reddit, subreddit, user, nextMonth.Year, nextMonth.Month).ToList();
             }
-
-            // TODO: Find or add the API methods for automatically making certain Monthly posts sticky.
         }
     }
 }
