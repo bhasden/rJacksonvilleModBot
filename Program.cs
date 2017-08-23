@@ -85,7 +85,7 @@ namespace rJacksonvilleModBot
                 yield return post;
 
                 createdPost = true;
-                Thread.Sleep(60000); // Wait 60 seconds before creating another post
+                Thread.Sleep(15000); // Wait 15 seconds before creating another post
 
                 dailyPostDate = dailyPostDate.AddDays(1);
             }
