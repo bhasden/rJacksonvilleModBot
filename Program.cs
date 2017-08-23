@@ -72,24 +72,21 @@ namespace rJacksonvilleModBot
 
                 if (dailyPosts.Any())
                 {
-                    if (dailyPosts.Count() > 1)
-                        reddit.ComposePrivateMessage("Multiple daily posts found", "Multiple posts found for " + dailyPostDate.ToShortDateString() + " post." + Environment.NewLine + string.Join(Environment.NewLine, dailyPosts.Select(p => p.Shortlink)), SubredditName);
-
-                    yield return dailyPosts.First();
+                    // Drop any existing posts. This can occur during a partial run or error event.
+                    foreach (var dailyPost in dailyPosts)
+                        dailyPost.Del();
                 }
-                else
-                {
-                    // Create the post for the day.
-                    var post = subreddit.SubmitTextPost(dailyPostTitle, string.Format(DailyPostDescription, dailyPostDate.ToLongDateString()));
-                    
-                    CreateDailyEvents(post, dailyPostDate.Year, dailyPostDate.Month, dailyPostDate.Day);
 
-                    yield return post;
+                // Create the post for the day.
+                var post = subreddit.SubmitTextPost(dailyPostTitle, string.Format(DailyPostDescription, dailyPostDate.ToLongDateString()));
 
-                    createdPost = true;
-                    Thread.Sleep(10000); // Wait 10 seconds before creating another post
-                }
-                
+                CreateDailyEvents(post, dailyPostDate.Year, dailyPostDate.Month, dailyPostDate.Day);
+
+                yield return post;
+
+                createdPost = true;
+                Thread.Sleep(60000); // Wait 60 seconds before creating another post
+
                 dailyPostDate = dailyPostDate.AddDays(1);
             }
 
@@ -150,7 +147,7 @@ namespace rJacksonvilleModBot
             var today = DateTime.Now;
             var dailyPosts = GetOrCreateDailyPosts(reddit, subreddit, user, today.Year, today.Month).ToList();
             var todaysPosts = dailyPosts.Where(p => p.AuthorName == user.Name && p.Title == string.Format(DailyPostTitleFormat, today.Year, today.ToString("MMMM"), today.Day)).ToList();
-            
+
             if (dailyPosts.Any())
             {
                 var settings = subreddit.Settings;
@@ -180,7 +177,7 @@ namespace rJacksonvilleModBot
 
                         if (i == 1)
                             newSidebarContent += Environment.NewLine + string.Join("|", Enumerable.Range(0, (int)date.DayOfWeek + 1).Select(d => string.Empty));
-                        
+
                         var dailyPost = dailyPosts.Where(p => p.AuthorName == user.Name && p.Title == string.Format(DailyPostTitleFormat, today.Year, today.ToString("MMMM"), i)).ToList();
 
                         if (dailyPost.Any())
