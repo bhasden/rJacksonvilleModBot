@@ -1,9 +1,9 @@
 ﻿{
   "$schema": "http://schemastore.org/schemas/json/webjob-publish-settings.json",
   "webJobName": "rJacksonvilleModBot",
-  "startTime": "2015-08-14T00:00:00-05:00",
+  "startTime": "2017-08-23T05:00:00-05:00",
   "endTime": null,
-  "jobRecurrenceFrequency": "Hour",
-  "interval": 12,
+  "jobRecurrenceFrequency": "Day",
+  "interval": 1,
   "runMode": "Scheduled"
 }

@@ -68,30 +68,41 @@ namespace rJacksonvilleModBot
             while (dailyPostDate.Month == month)
             {
                 var dailyPostTitle = string.Format(DailyPostTitleFormat, year, monthName, dailyPostDate.Day);
-                var dailyPosts = userPosts.Where(p => p.Title == dailyPostTitle).OrderByDescending(p => p.Created);
+                var dailyPosts = userPosts.Where(p => p.Title == dailyPostTitle).OrderBy(p => p.Created);
 
-                if (dailyPosts.Any())
+                if (dailyPosts.Count() == 1)
                 {
-                    // Drop any existing posts. This can occur during a partial run or error event.
-                    foreach (var dailyPost in dailyPosts)
-                        dailyPost.Del();
+                    yield return dailyPosts.First();
                 }
+                else
+                {
+                    // Somehow we got multiple posts for the same day. Drop and then recreate them.
+                    if (dailyPosts.Count() > 1)
+                    {
+                        Console.WriteLine("Multiple posts found for " + dailyPostDate.ToShortDateString() + " post." + Environment.NewLine + string.Join(Environment.NewLine, dailyPosts.Select(p => p.Shortlink)));
 
-                // Create the post for the day.
-                var post = subreddit.SubmitTextPost(dailyPostTitle, string.Format(DailyPostDescription, dailyPostDate.ToLongDateString()));
+                        // Drop any existing posts. This can occur during a partial run or error event.
+                        foreach (var dailyPost in dailyPosts)
+                            dailyPost.Del();
+                    }
 
-                CreateDailyEvents(post, dailyPostDate.Year, dailyPostDate.Month, dailyPostDate.Day);
+                    // Create the post for the day.
+                    var post = subreddit.SubmitTextPost(dailyPostTitle, string.Format(DailyPostDescription, dailyPostDate.ToLongDateString()));
 
-                yield return post;
+                    CreateDailyEvents(post, dailyPostDate.Year, dailyPostDate.Month, dailyPostDate.Day);
 
-                createdPost = true;
-                Thread.Sleep(15000); // Wait 15 seconds before creating another post
+                    Console.WriteLine($"Created daily post {dailyPostTitle}");
+
+                    yield return post;
+
+                    createdPost = true;
+                }
 
                 dailyPostDate = dailyPostDate.AddDays(1);
             }
 
             if (createdPost)
-                reddit.ComposePrivateMessage("New month worth of posts created", "Daily posts were created for " + monthName + ".", SubredditName);
+                reddit.ComposePrivateMessage("New month worth of posts created", $"Daily posts were created for {monthName}.", SubredditName);
         }
 
         static void Main(string[] args)
@@ -148,7 +159,7 @@ namespace rJacksonvilleModBot
             var dailyPosts = GetOrCreateDailyPosts(reddit, subreddit, user, today.Year, today.Month).ToList();
             var todaysPosts = dailyPosts.Where(p => p.AuthorName == user.Name && p.Title == string.Format(DailyPostTitleFormat, today.Year, today.ToString("MMMM"), today.Day)).ToList();
 
-            if (dailyPosts.Any())
+            if (dailyPosts.Any() && todaysPosts.Any())
             {
                 var settings = subreddit.Settings;
                 var sidebar = settings.Sidebar;
