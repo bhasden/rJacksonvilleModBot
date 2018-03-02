@@ -1,58 +1,105 @@
 ﻿using HtmlAgilityPack;
 using Microsoft.Azure;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using RedditSharp;
 using RedditSharp.Things;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Http;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace rJacksonvilleModBot
 {
     class Program
     {
-        private const string DailyEventsUrl = "http://events.jacksonville.com/calendar/day/{0}-{1}-{2}";
+        private const string GoogleMapsVenueUrl = "http://maps.google.com/?q={0}+{1}+{2}+{3}";
+        private const string DailyEventsUrl = "https://api.eviesays.com/1.1/getEvents.json?api_key=082e2a38281a9410f656b39ca67ee8a809db40d6&latitude=30.3321838&longitude=-81.655651&time_zone=America/New_York&start_date={0}-{1}-{2}&end_date={0}-{1}-{3}&limit=500&request={{%22params%22:{{%22order_by%22:[%22start_time%20asc%22],%22status%22:%22approved%22,%22current_site_id%22:2435}}}}";
         private const string DailyPostDescription = "Know of an event on {0}? Post it here and when the date comes around, it'll be linked to from the sidebar.";
         private const string DailyPostTitleFormat = "Jacksonville Events Calendar: {1} {2}, {0}";
         private const string SidebarSectionMarkdown = "#**Events and Entertainment**";
-        private const string SidebarSectionAdditional = "\r\n**More event & entertainment resources**\r\n\r\n* [Downtown Jacksonville](http://downtownjacksonville.org/Downtown_Vision_Inc_Home.aspx)\r\n* [Jax.com Events](http://events.jacksonville.com/)\r\n* [JaxEvents](http://www.jaxevents.com/)\r\n* [Folio Events](http://folioweekly.com/calendar)\r\n* [Jax4Kids - Family Friendly Events](http://jax4kids.com/)";
+        private const string SidebarSectionAdditional = "\r\n**More event & entertainment resources**\r\n\r\n* [Downtown Jacksonville](http://downtownjacksonville.org/Downtown_Vision_Inc_Home.aspx)\r\n* [Jacksonville.com Calendar](http://www.jacksonville.com/calendar)\r\n* [JaxEvents](http://www.jaxevents.com/)\r\n* [Folio Events](http://folioweekly.com/calendar)\r\n* [Jax4Kids - Family Friendly Events](http://jax4kids.com/)";
         private const string SubredditName = "/r/Jacksonville";
+        private static HttpClient httpClient = new HttpClient();
 
-        private static void CreateDailyEvents(Post post, int year, int month, int day)
+        private static async Task CreateDailyEvents(Post post, int year, int month, int day)
         {
-            var web = new HtmlWeb();
-            var url = string.Format(DailyEventsUrl, year, month, day);
-            var doc = web.Load(url);
+            var url = string.Format(DailyEventsUrl, year, month, day, day + 1);
 
-            foreach (var eventNode in doc.DocumentNode.SelectNodes("//div[@class='listing-item']").Reverse())
+            var response = await httpClient.GetAsync(url);
+
+            if (response.IsSuccessStatusCode)
             {
-                var eventComment = string.Empty;
+                var content = await response.Content.ReadAsStringAsync();
+                var json = JObject.Parse(content);
+                var events = json["events"];
 
-                var howNode = eventNode.SelectSingleNode("p[@class='item_how']/span/a");
-                var whatNode = eventNode.SelectSingleNode("span/p[@class='item_what']/a");
-                var whenNode = eventNode.SelectSingleNode("p[@class='item_when']/time");
-                var whereNode = eventNode.SelectSingleNode("span/p[@class='item_where']/a");
-
-                if (whatNode != null)
-                    eventComment += "Event: [" + whatNode.InnerText + "]" + "(" + new Uri(new Uri(url), whatNode.Attributes["href"].Value) + ")" + Environment.NewLine + Environment.NewLine;
-
-                if (whereNode != null)
-                    eventComment += "Place: [" + whereNode.InnerText + "]" + "(" + new Uri(new Uri(url), whereNode.Attributes["href"].Value) + ")" + Environment.NewLine + Environment.NewLine;
-
-                if (whenNode != null)
-                    eventComment += "Time: " + whenNode.InnerText + Environment.NewLine + Environment.NewLine;
-
-                if (howNode != null)
-                    eventComment += "[" + howNode.InnerText + "]" + "(" + new Uri(new Uri(url), howNode.Attributes["href"].Value) + ")" + Environment.NewLine + Environment.NewLine;
-
-                if (!string.IsNullOrWhiteSpace(eventComment))
+                foreach (var @event in events)
                 {
-                    eventComment += "&nbsp;" + Environment.NewLine + Environment.NewLine + "^^source: ^^[Jacksonville&nbsp;Events&nbsp;Calendar](http://events.jacksonville.com/)";
+                    var eventComment = string.Empty;
 
-                    post.Comment(eventComment);
+                    var title = @event["title"]?.ToString();
+                    var eventUrl = @event["url"]?.ToString();
+                    var description = @event["description"]?.ToString();
+                    var flyerUrls = @event["image_urls"]?.SelectTokens("$..detail_2x");
+                    var times = @event["times"]?.SelectTokens("$..time_describe");
+                    var venue = @event["venue"];
+
+                    if (!string.IsNullOrWhiteSpace(title))
+                    {
+                        eventComment += $"**Event**:" + Environment.NewLine + Environment.NewLine;
+                        eventComment += $"[{title}]({eventUrl}) {string.Join(" ", flyerUrls.Select(flyerUrl => $"[🖼️]({flyerUrl})"))}" + Environment.NewLine + Environment.NewLine;
+                    }
+
+                    if (times != null)
+                    {
+                        eventComment += $"**Time**:" + Environment.NewLine + Environment.NewLine;
+                        eventComment += $"{string.Join("; ", times.Select(time => time.ToString()))} " + Environment.NewLine + Environment.NewLine;
+                    }
+
+                    if (venue != null)
+                    {
+                        var venueName = venue["title"]?.ToString();
+                        var address1 = venue["address"]?.ToString();
+                        var address2 = venue["address_2"]?.ToString();
+                        var city = venue["city"]?.ToString();
+                        var state = venue["state"]?.ToString();
+                        var zipCode = venue["postal_code"]?.ToString();
+                        var venueUrl = venue.SelectToken("data.url")?.ToString();
+
+                        if (!string.IsNullOrWhiteSpace(venueUrl))
+                            venueUrl = venueUrl.StartsWith("http") ? venueUrl : "http://" + venueUrl;
+
+                        eventComment += "**Venue**:" + Environment.NewLine + Environment.NewLine;
+
+                        if (string.IsNullOrWhiteSpace(venueUrl))
+                            eventComment += $"{venueName} ";
+                        else
+                            eventComment += $"[{venueName}]({venueUrl}) ";
+
+                        eventComment += $"[📍]({string.Format(GoogleMapsVenueUrl, venueName, address1, city, state)})" + Environment.NewLine + Environment.NewLine;
+                        eventComment += address1 + Environment.NewLine + Environment.NewLine;
+                        eventComment += address2 + Environment.NewLine + Environment.NewLine;
+                        eventComment += $"{city}, {state} {zipCode}" + Environment.NewLine + Environment.NewLine;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(description))
+                    {
+                        eventComment += "**Description**:" + Environment.NewLine + Environment.NewLine;
+                        eventComment += description.Replace("\r", Environment.NewLine + Environment.NewLine).Replace("\n", Environment.NewLine + Environment.NewLine) + Environment.NewLine + Environment.NewLine;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(eventComment))
+                    {
+                        eventComment += "&nbsp;" + Environment.NewLine + Environment.NewLine + "^^source: ^^[Jacksonville.com&nbsp;Calendar](http://www.jacksonville.com/calendar)";
+
+                        post.Comment(eventComment);
+                    }
+
+                    Thread.Sleep(1000); // Wait 1 second(s) before posting another comment
                 }
-
-                Thread.Sleep(3000); // Wait 3 seconds before posting another comment
             }
         }
 
@@ -63,7 +110,7 @@ namespace rJacksonvilleModBot
 
             var createdPost = false;
             var dailyPostDate = firstDateOfMonth;
-            var userPosts = user.Posts.ToList();
+            var userPosts = user.GetPosts(Sort.New, 40, FromTime.Year).ToList();
 
             while (dailyPostDate.Month == month)
             {
@@ -89,7 +136,7 @@ namespace rJacksonvilleModBot
                     // Create the post for the day.
                     var post = subreddit.SubmitTextPost(dailyPostTitle, string.Format(DailyPostDescription, dailyPostDate.ToLongDateString()));
 
-                    CreateDailyEvents(post, dailyPostDate.Year, dailyPostDate.Month, dailyPostDate.Day);
+                    CreateDailyEvents(post, dailyPostDate.Year, dailyPostDate.Month, dailyPostDate.Day).Wait();
 
                     Console.WriteLine($"Created daily post {dailyPostTitle}");
 
@@ -148,10 +195,13 @@ namespace rJacksonvilleModBot
             }
 
             // Reply to any private messages that have been sent to the mod bot.
-            foreach (var message in user.PrivateMessages.Where(m => m.Unread))
+            if (user.UnreadMessages.Any())
             {
-                message.Reply("You have messaged the " + SubredditName + " moderator bot. These private messages are not actively monitored.");
-                message.SetAsRead();
+                foreach (var message in user.PrivateMessages.Where(m => m.Unread))
+                {
+                    message.Reply("You have messaged the " + SubredditName + " moderator bot. These private messages are not actively monitored.");
+                    message.SetAsRead();
+                }
             }
 
             // Get or create the post for this month
