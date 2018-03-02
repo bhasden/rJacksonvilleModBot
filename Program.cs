@@ -16,7 +16,7 @@ namespace rJacksonvilleModBot
     class Program
     {
         private const string GoogleMapsVenueUrl = "http://maps.google.com/?q={0}+{1}+{2}+{3}";
-        private const string DailyEventsUrl = "https://api.eviesays.com/1.1/getEvents.json?api_key=082e2a38281a9410f656b39ca67ee8a809db40d6&latitude=30.3321838&longitude=-81.655651&time_zone=America/New_York&start_date={0}-{1}-{2}&end_date={0}-{1}-{3}&limit=500&request={{%22params%22:{{%22order_by%22:[%22start_time%20asc%22],%22status%22:%22approved%22,%22current_site_id%22:2435}}}}";
+        private const string DailyEventsUrl = "https://api.eviesays.com/1.1/getEvents.json?api_key=082e2a38281a9410f656b39ca67ee8a809db40d6&latitude=30.3321838&longitude=-81.655651&time_zone=America/New_York&start_date={0}-{1}-{2}&end_date={0}-{1}-{2}&limit=500&request={{%22params%22:{{%22order_by%22:[%22start_time%20asc%22],%22status%22:%22approved%22,%22current_site_id%22:2435}}}}";
         private const string DailyPostDescription = "Know of an event on {0}? Post it here and when the date comes around, it'll be linked to from the sidebar.";
         private const string DailyPostTitleFormat = "Jacksonville Events Calendar: {1} {2}, {0}";
         private const string SidebarSectionMarkdown = "#**Events and Entertainment**";
@@ -26,7 +26,7 @@ namespace rJacksonvilleModBot
 
         private static async Task CreateDailyEvents(Post post, int year, int month, int day)
         {
-            var url = string.Format(DailyEventsUrl, year, month, day, day + 1);
+            var url = string.Format(DailyEventsUrl, year, month, day);
 
             var response = await httpClient.GetAsync(url);
 
@@ -38,13 +38,19 @@ namespace rJacksonvilleModBot
 
                 foreach (var @event in events)
                 {
+                    var startTimes = @event["times"]?.SelectTokens("..start_time");
+
+                    // If the event doesn't start on the desired day, skip it. This accounts for events that run until after midnight.
+                    if (!startTimes.Select(t => DateTime.Parse(t.ToString())).Any(d => d.Year == year && d.Month == month && d.Day == day))
+                        continue;
+
                     var eventComment = string.Empty;
 
                     var title = @event["title"]?.ToString();
                     var eventUrl = @event["url"]?.ToString();
                     var description = @event["description"]?.ToString();
-                    var flyerUrls = @event["image_urls"]?.SelectTokens("$..detail_2x");
-                    var times = @event["times"]?.SelectTokens("$..time_describe");
+                    var flyerUrls = @event["image_urls"]?.SelectTokens("..detail_2x");
+                    var times = @event["times"]?.SelectTokens("..time_describe");
                     var venue = @event["venue"];
 
                     if (!string.IsNullOrWhiteSpace(title))
